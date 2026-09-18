@@ -19,7 +19,8 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 
-from notam_parser import ORDRE_ROLE, ROLE_PAR_SECTION, Row, decouper_bulletins, parse_bulletin
+from notam_parser import (ORDRE_ROLE, ROLE_PAR_SECTION, Row, decouper_bulletins,
+                          parse_bulletin, texte_depuis_pdf)
 
 st.set_page_config(page_title="NOTAM Brief", page_icon="🛫", layout="wide")
 
@@ -186,11 +187,20 @@ with st.sidebar:
             n = ajouter_texte(colle)
             st.toast(f"{n} vol(s) ajouté(s)" if n else "Aucun NOTAM reconnu dans ce texte.")
 
-    fichiers = st.file_uploader("…ou importer des .txt", type=["txt"], accept_multiple_files=True)
+    fichiers = st.file_uploader("…ou importer le PDF Lido de la journée",
+                                type=["pdf", "txt"], accept_multiple_files=True)
     if fichiers:
         for f in fichiers:
-            ajouter_texte(f.read().decode("utf-8", errors="replace"))
-        st.session_state["_import_fait"] = True
+            try:
+                if f.name.lower().endswith(".pdf"):
+                    with st.spinner(f"Lecture de {f.name}…"):
+                        n = ajouter_texte(texte_depuis_pdf(f))
+                else:
+                    n = ajouter_texte(f.read().decode("utf-8", errors="replace"))
+                if not n:
+                    st.warning(f"Aucun NOTAM reconnu dans {f.name}.")
+            except Exception as exc:
+                st.error(f"{f.name} : {exc}")
 
     for i, b in enumerate(st.session_state.bulletins):
         c1, c2 = st.columns([5, 1])
