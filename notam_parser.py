@@ -31,7 +31,11 @@ RE_NOTAM = re.compile(
 RE_CALL = re.compile(r"^(?P<cs>[A-Z]{2,3}\d+)/(?P<date>\d{1,2}[A-Z]{3})[ \t]+OFP-NR:[ \t]*(?P<ofp>\d+)", re.M)
 RE_ROUTE = re.compile(r"^ROUTE:[ \t]+(?P<dep>\w{4})[ \t]*-[ \t]*(?P<dest>\w{4})[ \t]+ALTN:(?P<altn>[A-Z0-9 ]*)$", re.M)
 RE_DAILY = re.compile(r"^[ \t]*DAILY[ \t]+(?P<de>\d{4})-(?P<a>\d{4})(?:[ \t]+EXC[ \t]+(?P<exc>\w+))?[ \t]*$", re.M)
-RE_BULLETIN = re.compile(r"^NOTAM[ \t]*$\n^LIDO-NOTAM-BULLETIN", re.M)
+# On ancre sur la ligne LIDO-NOTAM-BULLETIN elle-meme : dans les .txt elle suit
+# immediatement la ligne « NOTAM », mais dans le PDF une ligne vide s'intercale.
+# Le marqueur de fin (« ==== END OF LIDO-NOTAM-BULLETIN ==== ») n'est pas en debut
+# de ligne, il n'est donc jamais pris pour un debut de bulletin.
+RE_BULLETIN = re.compile(r"^LIDO-NOTAM-BULLETIN", re.M)
 
 SECTIONS_GARDEES = {"DEPARTURE AIRPORT", "DESTINATION AIRPORT", "DESTINATION ALTERNATE(S)"}
 ROLE_PAR_SECTION = {"DEPARTURE AIRPORT": "Départ", "DESTINATION AIRPORT": "Destination",
@@ -184,6 +188,44 @@ def parse_bulletin(texte: str) -> Bulletin:
         altn=route.group("altn").split() if route else [],
         rows=rows,
     )
+
+
+RE_PIED_PAGE = re.compile(r"^Page\s+\d+\s+of\s+\d+$")
+
+
+def nettoyer_pdf(texte: str) -> str:
+    """Retire les artefacts de pagination d'un PDF Lido.
+
+    Chaque page porte un en-tête de vol répété (« FR 7820/16Sep26/LIRF-LGRP
+    Reg:EIDWS OFP:4/0/0 ») et un pied « Page N of M ». Comme un NOTAM peut être
+    coupé entre deux pages, ces lignes atterrissent au milieu du corps du NOTAM
+    si on ne les retire pas d'abord.
+    """
+    lignes = []
+    for ligne in texte.replace("\f", "\n").splitlines():
+        s = ligne.strip()
+        if RE_PIED_PAGE.match(s):
+            continue
+        if "Reg:" in s and "OFP:" in s and "OFP-NR" not in s:
+            continue
+        lignes.append(ligne)
+    return "\n".join(lignes)
+
+
+def texte_depuis_pdf(flux) -> str:
+    """PDF Lido -> texte brut prêt pour decouper_bulletins().
+
+    `flux` est un chemin ou un objet fichier. Nécessite pypdf.
+    Le mode d'extraction par défaut de pypdf est utilisé volontairement : le mode
+    'layout' échoue sur ces bulletins (aucun NOTAM récupéré).
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise RuntimeError("L'import PDF nécessite le paquet pypdf "
+                           "(pip install pypdf).") from exc
+    reader = PdfReader(flux)
+    return nettoyer_pdf("\n".join(page.extract_text() or "" for page in reader.pages))
 
 
 def decouper_bulletins(texte: str) -> list[str]:
